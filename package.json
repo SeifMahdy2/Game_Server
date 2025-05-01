@@ -9,10 +9,10 @@
   "name": "game_server",
   "version": "1.0.0",
   "description": "Tower Defense server",
-  "main": "server.js",
+  "main": "Server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node Server.js"
   },
   "repository": {
     "type": "git",
