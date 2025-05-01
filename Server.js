@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
-const db = require('./Database');
+const db = require("./database");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -23,13 +23,23 @@ app.post('/register', (req, res) => {
         return res.status(400).json({ error: 'Username, email, and password are required' });
     }
     
-    const sql = `INSERT INTO users (username, email, password, levels_completed) VALUES (?, ?, ?, 0)`;
+    const sql = `INSERT INTO users (username, email, password) VALUES (?, ?, ?)`;
     db.run(sql, [username, email, password], function (err) {
         if (err) {
             console.error('Register error:', err.message);
             return res.status(400).json({ error: err.message });
         }
-        res.json({ id: this.lastID, username, email, levels_completed: 0 });
+        
+        // Also create initial progress entry for this user
+        const progressSql = `INSERT INTO progress (username, level1, level2) VALUES (?, 0, 0)`;
+        db.run(progressSql, [username], function(progressErr) {
+            if (progressErr) {
+                console.error('Progress creation error:', progressErr.message);
+                // Continue anyway as user was created
+            }
+            
+            res.json({ id: this.lastID, username, email });
+        });
     });
 });
 
@@ -45,29 +55,39 @@ app.post('/login', (req, res) => {
     
     const sql = `SELECT id, username, email, levels_completed FROM users WHERE username = ? AND password = ?`;
     console.log('Executing login query for username:', username);
-    db.get(sql, [username, password], (err, row) => {
+    db.get(sql, [username, password], (err, user) => {
         if (err) {
             console.error('Login error:', err.message);
             return res.status(400).json({ error: err.message });
         }
         
-        if (!row) {
+        if (!user) {
             console.log('Login failed: Invalid credentials for username:', username);
             return res.status(401).json({ error: 'Invalid username or password' });
         }
         
-        const levelData = {
-            level1: true, // Level 1 is always unlocked
-            level2: row.levels_completed >= 1 // Level 2 is unlocked if level 1 is completed
-        };
-        
-        console.log('Login successful for user:', username, '(ID:', row.id, ')');
-        res.json({ 
-            success: true,
-            user: {
-                ...row,
-                levels: levelData
+        // Get user's progress data
+        const progressSql = `SELECT level1, level2 FROM progress WHERE username = ?`;
+        db.get(progressSql, [username], (progressErr, progress) => {
+            if (progressErr) {
+                console.error('Progress fetch error:', progressErr.message);
+                return res.status(400).json({ error: progressErr.message });
             }
+            
+            // Convert integer values to booleans for the client
+            const levels = {
+                level1: progress ? progress.level1 === 1 : false,
+                level2: progress ? progress.level2 === 1 : false
+            };
+            
+            console.log('Login successful for user:', username, '(ID:', user.id, ')');
+            res.json({ 
+                success: true,
+                user: {
+                    ...user,
+                    levels
+                }
+            });
         });
     });
 });
@@ -81,16 +101,7 @@ app.get('/user/:id', (req, res) => {
             console.error('Get user error:', err.message);
             return res.status(400).json({ error: err.message });
         }
-        
-        const levelData = {
-            level1: true, // Level 1 is always unlocked
-            level2: row.levels_completed >= 1 // Level 2 is unlocked if level 1 is completed
-        };
-        
-        res.json({
-            ...row,
-            levels: levelData
-        });
+        res.json(row);
     });
 });
 
@@ -103,40 +114,21 @@ app.get('/users', (req, res) => {
             console.error('Get all users error:', err.message);
             return res.status(400).json({ error: err.message });
         }
-        
-        const usersWithLevels = rows.map(user => ({
-            ...user,
-            levels: {
-                level1: true,
-                level2: user.levels_completed >= 1
-            }
-        }));
-        
-        res.json({ users: usersWithLevels });
+        res.json({ users: rows });
     });
 });
 
-// 3. Update levels completed
-app.put('/update-levels-completed', (req, res) => {
-    console.log('Update levels completed request:', req.body);
-    const { id, levels_completed } = req.body;
-    const sql = `UPDATE users SET levels_completed = ? WHERE id = ?`;
-    db.run(sql, [levels_completed, id], function (err) {
+// 3. Update user score
+app.put('/update-score', (req, res) => {
+    console.log('Update score request:', req.body);
+    const { id, score } = req.body;
+    const sql = `UPDATE users SET score = ? WHERE id = ?`;
+    db.run(sql, [score, id], function (err) {
         if (err) {
-            console.error('Update levels completed error:', err.message);
+            console.error('Update score error:', err.message);
             return res.status(400).json({ error: err.message });
         }
-        
-        // Calculate unlocked levels
-        const levelData = {
-            level1: true,
-            level2: levels_completed >= 1
-        };
-        
-        res.json({ 
-            message: 'Levels completed updated successfully',
-            levels: levelData
-        });
+        res.json({ message: 'Score updated successfully' });
     });
 });
 
@@ -153,101 +145,75 @@ app.delete('/user/:id', (req, res) => {
     });
 });
 
-// Root route for testing
-app.get('/', (req, res) => {
-    res.json({ message: 'Game server is running!' });
-});
-
-// Update progress endpoint
+// 5. Update user progress
 app.post('/update-progress', (req, res) => {
-  const { username, level1, level2 } = req.body;
-  
-  if (!username) {
-    return res.status(400).json({ success: false, message: 'Username is required' });
-  }
-  
-  // Convert boolean to integer (SQLite doesn't have boolean type)
-  const level1Value = level1 ? 1 : 0;
-  const level2Value = level2 ? 1 : 0;
-  
-  // Update or insert progress
-  db.run(`INSERT INTO progress (username, level1, level2) 
-          VALUES (?, ?, ?) 
-          ON CONFLICT(username) 
-          DO UPDATE SET level1 = ?, level2 = ?`, 
-    [username, level1Value, level2Value, level1Value, level2Value], function(err) {
-    if (err) {
-      return res.status(400).json({ success: false, message: err.message });
-    }
-    
-    res.json({ success: true, message: 'Progress updated successfully' });
-  });
-});
-
-// Get progress endpoint
-app.get('/progress/:username', (req, res) => {
-  const username = req.params.username;
-  
-  db.get('SELECT * FROM progress WHERE username = ?', [username], (err, progress) => {
-    if (err) {
-      return res.status(400).json({ success: false, message: err.message });
-    }
-    
-    if (!progress) {
-      return res.status(404).json({ success: false, message: 'Progress not found' });
-    }
-    
-    res.json({ 
-      success: true, 
-      progress: { 
-        level1: progress.level1 === 1, 
-        level2: progress.level2 === 1 
-      } 
-    });
-  });
-});
-
-// Update levels completed by username
-app.put('/update-levels-completed-by-username', (req, res) => {
-    console.log('Update levels completed by username request:', req.body);
-    const { username, levels_completed } = req.body;
+    console.log('Update progress request:', req.body);
+    const { username, level1, level2 } = req.body;
     
     if (!username) {
         return res.status(400).json({ error: 'Username is required' });
     }
     
-    // First find the user by username
-    const findUserSql = `SELECT id FROM users WHERE username = ?`;
-    db.get(findUserSql, [username], (err, user) => {
+    // Convert boolean values to integers for storage
+    const level1Value = level1 ? 1 : 0;
+    const level2Value = level2 ? 1 : 0;
+    
+    // Update progress table
+    const sql = `INSERT OR REPLACE INTO progress (username, level1, level2) VALUES (?, ?, ?)`;
+    db.run(sql, [username, level1Value, level2Value], function (err) {
         if (err) {
-            console.error('Error finding user:', err.message);
+            console.error('Update progress error:', err.message);
             return res.status(400).json({ error: err.message });
         }
         
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
-        // Now update the levels_completed with the found ID
-        const updateSql = `UPDATE users SET levels_completed = ? WHERE id = ?`;
-        db.run(updateSql, [levels_completed, user.id], function (err) {
-            if (err) {
-                console.error('Update levels completed error:', err.message);
-                return res.status(400).json({ error: err.message });
+        // Also update levels_completed in the users table
+        const levelsCompleted = level1Value + level2Value;
+        const userSql = `UPDATE users SET levels_completed = ? WHERE username = ?`;
+        db.run(userSql, [levelsCompleted, username], function (userErr) {
+            if (userErr) {
+                console.error('Update levels_completed error:', userErr.message);
+                // Continue anyway, as progress was updated
             }
             
-            // Calculate unlocked levels
-            const levelData = {
-                level1: true,
-                level2: levels_completed >= 1
-            };
-            
             res.json({ 
-                message: 'Levels completed updated successfully',
-                levels: levelData
+                success: true,
+                message: 'Progress updated successfully' 
             });
         });
     });
+});
+
+// 6. Get user progress
+app.get('/progress/:username', (req, res) => {
+    console.log('Get progress request for username:', req.params.username);
+    const sql = `SELECT level1, level2 FROM progress WHERE username = ?`;
+    db.get(sql, [req.params.username], (err, row) => {
+        if (err) {
+            console.error('Get progress error:', err.message);
+            return res.status(400).json({ error: err.message });
+        }
+        
+        if (!row) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'No progress found for this user' 
+            });
+        }
+        
+        // Convert integer values to booleans for the client
+        res.json({ 
+            success: true,
+            progress: {
+                level1: row.level1 === 1,
+                level2: row.level2 === 1
+            }
+        });
+    });
+});
+
+// Root route for testing
+app.get('/', (req, res) => {
+    res.json({ message: 'Game server is running!' });
 });
 
 // Start server
