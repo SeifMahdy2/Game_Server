@@ -3,7 +3,7 @@ const sqlite3 = require('sqlite3').verbose();
 
 const dbPath = process.env.NODE_ENV === 'production'
     ? '/tmp/users.db'
-    : path.resolve(__dirname, 'users.db'); // for local development
+    :  'users.db'; 
 
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
