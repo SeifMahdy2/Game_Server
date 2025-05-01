@@ -4,7 +4,8 @@ const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const db = require('./Database');
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
 
 // Middleware
 app.use(cors()); // Allow Unity to access API
