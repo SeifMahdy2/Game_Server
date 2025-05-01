@@ -1,10 +1,16 @@
+const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
+
+const dbPath = process.env.NODE_ENV === 'production'
+    ? '/tmp/users.db'
+    : path.resolve(__dirname, 'users.db'); // for local development
+
 // Connect to SQLite database
-const db = new sqlite3.Database('./users.db', (err) => {
+const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Error opening database:', err.message);
     } else {
-        console.log('Connected to SQLite database.');
+        console.log('Connected to SQLite database at', dbPath);
         
         // Create users table if not exists with password column included
         db.run(`
@@ -17,7 +23,6 @@ const db = new sqlite3.Database('./users.db', (err) => {
             )
         `);
         
-        // Migration: Rename 'score' column to 'levels_completed' if it exists
         db.all("PRAGMA table_info(users)", (err, rows) => {
             if (err) {
                 console.error('Error checking table schema:', err.message);
