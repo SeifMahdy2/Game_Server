@@ -18,16 +18,7 @@ const db = new sqlite3.Database(dbPath, (err) => {
                 username TEXT UNIQUE NOT NULL,
                 email TEXT UNIQUE NOT NULL,
                 password TEXT,
-                levels_completed INTEGER DEFAULT 0
-            )
-        `);
-        
-        // Create progress table if not exists
-        db.run(`
-            CREATE TABLE IF NOT EXISTS progress (
-                username TEXT PRIMARY KEY,
-                level1 INTEGER DEFAULT 0,
-                level2 INTEGER DEFAULT 0
+                score INTEGER DEFAULT 0
             )
         `);
     }
